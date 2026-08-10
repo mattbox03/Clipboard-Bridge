@@ -30,7 +30,7 @@ def load_client(tmp_path, monkeypatch):
 def test_runtime_data_uses_user_writable_folders(tmp_path, monkeypatch):
     client = load_client(tmp_path, monkeypatch)
 
-    assert client.APP_VERSION == "2.0.6"
+    assert client.APP_VERSION == "2.0.7"
     assert client.DATA_DIR == str(tmp_path / "LocalAppData" / "Clipboard Bridge")
     assert client.CONFIG_FILE.startswith(client.DATA_DIR)
     assert client.HOST_DIR.startswith(client.DATA_DIR)
@@ -202,6 +202,159 @@ def test_auto_sync_notifies_when_remote_text_is_copied(tmp_path, monkeypatch):
     assert notifications == [client.t("text_arrived")]
 
 
+def test_auto_sync_does_not_receive_or_upload_its_own_text_again(tmp_path, monkeypatch):
+    client = load_client(tmp_path, monkeypatch)
+    posts = []
+    copied = []
+    notifications = []
+
+    class Response:
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def json():
+            return {"id": "local-text"}
+
+    class OneIteration:
+        done = False
+
+        def is_set(self):
+            return self.done
+
+        def wait(self, timeout):
+            self.done = True
+
+    def post(*args, **kwargs):
+        posts.append((args, kwargs))
+        return Response()
+
+    client.config.update({
+        "auto_sync": True,
+        "auto_receive_files": False,
+        "monitor_clipboard": False,
+        "notifications_enabled": True,
+        "notify_text": True,
+    })
+    monkeypatch.setattr(client.requests, "post", post)
+    monkeypatch.setattr(client, "stop_event", OneIteration())
+    monkeypatch.setattr(client, "check_connection", lambda: True)
+    monkeypatch.setattr(client, "get_clipboard_files", lambda: [])
+    monkeypatch.setattr(client, "get_clipboard_image", lambda: None)
+    monkeypatch.setattr(client, "get_clipboard_text", lambda: "Sent from this PC")
+    monkeypatch.setattr(
+        client,
+        "pull_latest",
+        lambda: {"id": "local-text", "type": "text", "text": "Sent from this PC"},
+    )
+    monkeypatch.setattr(client, "set_clipboard_text", lambda text: copied.append(text))
+    monkeypatch.setattr(
+        client,
+        "notify",
+        lambda message, action=None: notifications.append(message),
+    )
+
+    assert client.push_text("Sent from this PC") == "local-text"
+    client.sync_loop()
+
+    assert len(posts) == 1
+    assert copied == []
+    assert notifications == []
+
+
+def test_last_handled_item_is_not_notified_again_after_restart(tmp_path, monkeypatch):
+    first = load_client(tmp_path, monkeypatch)
+    first.config.update({"server_ip": "10.0.0.10", "server_port": 5088})
+    first._remember_item("already-seen")
+
+    second = load_client(tmp_path, monkeypatch)
+    copied = []
+    notifications = []
+
+    class OneIteration:
+        done = False
+
+        def is_set(self):
+            return self.done
+
+        def wait(self, timeout):
+            self.done = True
+
+    second.config.update({
+        "server_ip": "10.0.0.10",
+        "server_port": 5088,
+        "auto_sync": True,
+        "auto_receive_files": False,
+        "monitor_clipboard": False,
+    })
+    monkeypatch.setattr(second, "stop_event", OneIteration())
+    monkeypatch.setattr(second, "check_connection", lambda: True)
+    monkeypatch.setattr(second, "get_clipboard_files", lambda: [])
+    monkeypatch.setattr(second, "get_clipboard_image", lambda: None)
+    monkeypatch.setattr(second, "get_clipboard_text", lambda: "")
+    monkeypatch.setattr(
+        second,
+        "pull_latest",
+        lambda: {"id": "already-seen", "type": "text", "text": "Old text"},
+    )
+    monkeypatch.setattr(second, "set_clipboard_text", lambda text: copied.append(text))
+    monkeypatch.setattr(
+        second,
+        "notify",
+        lambda message, action=None: notifications.append(message),
+    )
+
+    second.sync_loop()
+
+    assert copied == []
+    assert notifications == []
+
+
+def test_two_remote_file_items_leave_only_the_newest_on_clipboard(tmp_path, monkeypatch):
+    client = load_client(tmp_path, monkeypatch)
+    history = []
+    clipboard_files = []
+    notifications = []
+
+    monkeypatch.setattr(client, "fetch_history", lambda limit=200: list(history))
+    monkeypatch.setattr(
+        client,
+        "fetch_item",
+        lambda item_id: {
+            "id": item_id,
+            "type": "file",
+            "filename": item_id + ".pdf",
+            "data": base64.b64encode(item_id.encode("ascii")).decode("ascii"),
+        },
+    )
+    monkeypatch.setattr(
+        client,
+        "set_clipboard_files",
+        lambda paths: clipboard_files.append(list(paths)),
+    )
+    monkeypatch.setattr(
+        client,
+        "notify",
+        lambda message, action=None: notifications.append(message),
+    )
+
+    assert client._auto_receive_remote_files() == []
+    history.extend([
+        {"id": "newest", "type": "file", "filename": "newest.pdf"},
+        {"id": "older", "type": "file", "filename": "older.pdf"},
+    ])
+
+    received = client._auto_receive_remote_files()
+
+    newest = str(Path(client.RECEIVED_DIR) / "newest.pdf")
+    assert received == [newest]
+    assert clipboard_files == [[newest]]
+    assert (Path(client.RECEIVED_DIR) / "older.pdf").read_bytes() == b"older"
+    assert (Path(client.RECEIVED_DIR) / "newest.pdf").read_bytes() == b"newest"
+    assert len(notifications) == 2
+
+
 def test_embedded_server_file_arrives_without_manual_receive(tmp_path, monkeypatch):
     client = load_client(tmp_path, monkeypatch)
     notifications = []
@@ -243,6 +396,41 @@ def test_embedded_server_file_arrives_without_manual_receive(tmp_path, monkeypat
         assert len(notifications) == 1
         assert callable(notifications[0][1])
         assert clipboard_files == [[str(received)]]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_locally_uploaded_file_is_not_received_back_or_notified(tmp_path, monkeypatch):
+    client = load_client(tmp_path, monkeypatch)
+    notifications = []
+    clipboard_files = []
+    source = tmp_path / "local.pdf"
+    source.write_bytes(b"local-file")
+    server = client.http.server.ThreadingHTTPServer(("127.0.0.1", 0), client._SrvHandler)
+    port = server.server_address[1]
+    client.config.update({"mode": "server", "host_port": port})
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(
+        client,
+        "notify",
+        lambda message, action=None: notifications.append((message, action)),
+    )
+    monkeypatch.setattr(
+        client,
+        "set_clipboard_files",
+        lambda paths: clipboard_files.append(list(paths)),
+    )
+
+    try:
+        assert client._auto_receive_remote_files() == []
+        assert client.push_file(str(source))
+        assert client._auto_receive_remote_files() == []
+        assert notifications == []
+        assert clipboard_files == []
+        assert not Path(client.RECEIVED_DIR).exists()
     finally:
         server.shutdown()
         server.server_close()
@@ -341,6 +529,46 @@ def test_file_clipboard_payload_uses_unicode_hdrop(tmp_path, monkeypatch):
     assert header.pFiles == client.ctypes.sizeof(client._DROPFILES)
     names = payload[header.pFiles:].decode("utf-16-le").rstrip("\0").split("\0")
     assert names == [str(first.resolve()), str(second.resolve())]
+
+
+def test_local_history_deduplicates_repeated_clipboard_items(tmp_path, monkeypatch):
+    client = load_client(tmp_path, monkeypatch)
+    first = tmp_path / "first.pdf"
+    second = tmp_path / "second.pdf"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+
+    client.record_local_file(str(first))
+    client.record_local_file(str(first))
+    client.record_local_files([str(first), str(second)])
+    client.record_local_files([str(first), str(second)])
+    image = client.Image.new("RGB", (8, 8), "red")
+    client.record_local_image(image)
+    client.record_local_image(image.copy())
+
+    history = client._local_load()
+    assert [item["type"] for item in history] == ["image", "bundle", "file"]
+    assert len(list(Path(client.LOCAL_DIR).glob("*.png"))) == 1
+    assert not Path(client.LOCAL_INDEX + ".tmp").exists()
+
+
+def test_concurrent_local_history_updates_do_not_lose_entries(tmp_path, monkeypatch):
+    client = load_client(tmp_path, monkeypatch)
+    expected = {f"entry-{index}" for index in range(20)}
+    threads = [
+        threading.Thread(target=client.record_local_text, args=(text,))
+        for text in expected
+    ]
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    history = client._local_load()
+    assert {item["text"] for item in history} == expected
+    assert len(history) == len(expected)
+    assert not Path(client.LOCAL_INDEX + ".tmp").exists()
 
 
 def test_manual_receive_puts_file_on_clipboard(tmp_path, monkeypatch):

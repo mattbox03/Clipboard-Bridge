@@ -2,6 +2,18 @@
 
 All notable user-facing changes are documented here.
 
+## 2.0.7 - 2026-08-10
+
+### Fixed
+
+- Prevented Windows from reporting a locally uploaded clipboard item as newly received.
+- Prevented manual uploads from being immediately uploaded a second time by auto-sync.
+- Remembered the last handled server item across restarts to avoid repeated notifications.
+- Kept only the newest remote file group on the Windows clipboard when several items
+  arrive between polling cycles.
+- Made local-history writes atomic and removed consecutive duplicate text, image, file
+  and grouped-file entries.
+
 ## 2.0.6 - 2026-08-03
 
 ### Fixed
