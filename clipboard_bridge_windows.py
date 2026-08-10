@@ -179,6 +179,10 @@ _cmd_q = queue.Queue()  # GUI commands from the tray thread, run on the Tk threa
 _notification_action = None
 _notification_lock = threading.Lock()
 _sync_state_lock = threading.Lock()
+_remote_activity_lock = threading.RLock()
+_local_history_lock = threading.RLock()
+_local_upload_lock = threading.Lock()
+_local_upload_marker = None
 _connection_lock = threading.Lock()
 _connection_state = "checking"
 _connection_checked_server = None
@@ -741,6 +745,24 @@ def _img_hash(img):
         return None
 
 
+def _file_clipboard_key(paths):
+    return tuple(os.path.normcase(os.path.abspath(path)) for path in paths)
+
+
+def _set_local_upload_marker(kind, value):
+    global _local_upload_marker
+    with _local_upload_lock:
+        _local_upload_marker = (kind, value)
+
+
+def _take_local_upload_marker():
+    global _local_upload_marker
+    with _local_upload_lock:
+        marker = _local_upload_marker
+        _local_upload_marker = None
+        return marker
+
+
 def save_received(filename, raw):
     os.makedirs(RECEIVED_DIR, exist_ok=True)
     name = os.path.basename(str(filename or "file.bin").replace("\\", "/"))
@@ -780,30 +802,37 @@ def reveal_received_file(path):
 
 # ---------------------------------------------------------------- network
 def push_text(text):
-    r = requests.post(f"{server_url()}/clipboard/text",
-                      json={"text": text}, headers=auth_headers(),
-                      params=auth_params(), timeout=5)
-    r.raise_for_status()
-    try:
-        return r.json().get("id")
-    except (ValueError, AttributeError):
-        return None
+    with _remote_activity_lock:
+        r = requests.post(f"{server_url()}/clipboard/text",
+                          json={"text": text}, headers=auth_headers(),
+                          params=auth_params(), timeout=5)
+        r.raise_for_status()
+        try:
+            item_id = r.json().get("id")
+        except (ValueError, AttributeError):
+            item_id = None
+        _mark_local_item_sent(item_id)
+        _set_local_upload_marker("text", text)
+        return item_id
 
 
 def push_bytes(filename, raw):
     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    r = requests.post(
-        f"{server_url()}/clipboard",
-        files=[("files", (filename, raw, mime))],
-        headers=auth_headers(),
-        params=auth_params(),
-        timeout=30,
-    )
-    r.raise_for_status()
-    try:
-        return r.json().get("id")
-    except (ValueError, AttributeError):
-        return None
+    with _remote_activity_lock:
+        r = requests.post(
+            f"{server_url()}/clipboard",
+            files=[("files", (filename, raw, mime))],
+            headers=auth_headers(),
+            params=auth_params(),
+            timeout=30,
+        )
+        r.raise_for_status()
+        try:
+            item_id = r.json().get("id")
+        except (ValueError, AttributeError):
+            item_id = None
+        _mark_local_item_sent(item_id)
+        return item_id
 
 
 def push_file(path):
@@ -811,7 +840,7 @@ def push_file(path):
 
 
 def push_files(paths):
-    paths = [path for path in paths if os.path.isfile(path)]
+    paths = [os.path.abspath(path) for path in paths if os.path.isfile(path)]
     if not paths:
         raise ValueError("No readable files selected")
     opened = []
@@ -822,60 +851,70 @@ def push_files(paths):
             opened.append(stream)
             mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
             parts.append(("files", (os.path.basename(path), stream, mime)))
-        r = requests.post(
-            f"{server_url()}/clipboard",
-            files=parts,
-            headers=auth_headers(),
-            params=auth_params(),
-            timeout=120,
-        )
-        r.raise_for_status()
-        return r.json().get("id")
+        with _remote_activity_lock:
+            r = requests.post(
+                f"{server_url()}/clipboard",
+                files=parts,
+                headers=auth_headers(),
+                params=auth_params(),
+                timeout=120,
+            )
+            r.raise_for_status()
+            item_id = r.json().get("id")
+            _mark_local_item_sent(item_id, file_item=True)
+            _set_local_upload_marker("files", _file_clipboard_key(paths))
+            return item_id
     finally:
         for stream in opened:
             stream.close()
 
 
 def push_image(img):
-    return push_bytes("clipboard.png", image_to_png(img))
+    with _remote_activity_lock:
+        item_id = push_bytes("clipboard.png", image_to_png(img))
+        _set_local_upload_marker("image", _img_hash(img))
+        return item_id
 
 
 def pull_latest():
-    r = requests.get(f"{server_url()}/clipboard/latest",
-                     headers=auth_headers(), params=auth_params(), timeout=5)
-    r.raise_for_status()
-    return r.json()
+    with _remote_activity_lock:
+        r = requests.get(f"{server_url()}/clipboard/latest",
+                         headers=auth_headers(), params=auth_params(), timeout=5)
+        r.raise_for_status()
+        return r.json()
 
 
 def fetch_history(limit=100):
-    r = requests.get(f"{server_url()}/clipboard/history",
-                     params=auth_params({"limit": limit}), headers=auth_headers(), timeout=5)
-    r.raise_for_status()
-    return r.json().get("items", [])
+    with _remote_activity_lock:
+        r = requests.get(f"{server_url()}/clipboard/history",
+                         params=auth_params({"limit": limit}), headers=auth_headers(), timeout=5)
+        r.raise_for_status()
+        return r.json().get("items", [])
 
 
 def fetch_item(item_id):
-    r = requests.get(f"{server_url()}/clipboard/item/{item_id}",
-                     headers=auth_headers(), params=auth_params(), timeout=30)
-    r.raise_for_status()
-    return r.json()
+    with _remote_activity_lock:
+        r = requests.get(f"{server_url()}/clipboard/item/{item_id}",
+                         headers=auth_headers(), params=auth_params(), timeout=30)
+        r.raise_for_status()
+        return r.json()
 
 
 def fetch_bundle_member(item_id, member_index):
-    r = requests.get(
-        f"{server_url()}/clipboard/item/{item_id}/file/{member_index}/raw",
-        headers=auth_headers(),
-        params=auth_params(),
-        timeout=60,
-    )
-    r.raise_for_status()
-    filename = r.headers.get("X-Clipboard-Filename", "file.bin")
-    try:
-        from urllib.parse import unquote
-        filename = unquote(filename)
-    except Exception:
-        pass
-    return filename, r.content
+    with _remote_activity_lock:
+        r = requests.get(
+            f"{server_url()}/clipboard/item/{item_id}/file/{member_index}/raw",
+            headers=auth_headers(),
+            params=auth_params(),
+            timeout=60,
+        )
+        r.raise_for_status()
+        filename = r.headers.get("X-Clipboard-Filename", "file.bin")
+        try:
+            filename = unquote(filename)
+        except Exception:
+            pass
+        return filename, r.content
 
 
 def save_remote_files(item):
@@ -920,18 +959,57 @@ def _save_sync_state(state):
     os.replace(temp, SYNC_STATE_FILE)
 
 
-def _mark_remote_file_seen(item_id):
+def _remember_item(item_id, *, file_seen=False, suppress_notification=False):
     if not item_id:
         return
     with _sync_state_lock:
         state = _load_sync_state()
-        sources = state.setdefault("sources", {})
         key = _sync_source_key()
-        seen = sources.setdefault(key, [])
-        if item_id not in seen:
-            seen.insert(0, item_id)
-        sources[key] = seen[:500]
+        state.setdefault("latest_items", {})[key] = item_id
+        if file_seen:
+            sources = state.setdefault("sources", {})
+            seen = sources.setdefault(key, [])
+            if item_id not in seen:
+                seen.insert(0, item_id)
+            sources[key] = seen[:500]
+        if suppress_notification:
+            silent = state.setdefault("silent_items", {}).setdefault(key, [])
+            if item_id not in silent:
+                silent.insert(0, item_id)
+            state["silent_items"][key] = silent[:500]
         _save_sync_state(state)
+
+
+def _mark_remote_file_seen(item_id):
+    _remember_item(item_id, file_seen=True)
+
+
+def _mark_local_item_sent(item_id, file_item=False):
+    _remember_item(
+        item_id,
+        file_seen=file_item,
+        suppress_notification=True,
+    )
+
+
+def _last_remembered_item():
+    with _sync_state_lock:
+        state = _load_sync_state()
+        return state.get("latest_items", {}).get(_sync_source_key())
+
+
+def _consume_silent_item(item_id):
+    if not item_id:
+        return False
+    with _sync_state_lock:
+        state = _load_sync_state()
+        key = _sync_source_key()
+        items = state.get("silent_items", {}).get(key, [])
+        if item_id not in items:
+            return False
+        state["silent_items"][key] = [value for value in items if value != item_id]
+        _save_sync_state(state)
+        return True
 
 
 def _auto_receive_remote_files():
@@ -955,7 +1033,7 @@ def _auto_receive_remote_files():
         seen = set(sources.get(key, []))
 
     new_items = [item for item in reversed(remote_files) if item["id"] not in seen]
-    received_paths = []
+    clipboard_paths = []
     for item in new_items:
         full = fetch_item(item["id"])
         paths = save_remote_files(full)
@@ -964,7 +1042,7 @@ def _auto_receive_remote_files():
             continue
         record_local_files(paths)
         _mark_remote_file_seen(item["id"])
-        received_paths.extend(paths)
+        clipboard_paths = paths
         message = (
             t("files_arrived", n=len(paths)) if len(paths) > 1
             else t("file_arrived", name=os.path.basename(paths[0]))
@@ -977,9 +1055,9 @@ def _auto_receive_remote_files():
                 else (lambda path=paths[0]: reveal_received_file(path))
             ),
         )
-    if received_paths:
-        set_clipboard_files(received_paths)
-    return received_paths
+    if clipboard_paths:
+        set_clipboard_files(clipboard_paths)
+    return clipboard_paths
 
 
 # ---------------------------------------------------------------- embedded server (server mode)
@@ -1608,25 +1686,29 @@ def stop_host_server():
 
 # ---------------------------------------------------------------- local history
 def _local_load():
-    if os.path.exists(LOCAL_INDEX):
-        try:
-            with open(LOCAL_INDEX, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            return []
-    return []
+    with _local_history_lock:
+        if os.path.exists(LOCAL_INDEX):
+            try:
+                with open(LOCAL_INDEX, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                return []
+        return []
 
 
 def _local_save(index):
-    while len(index) > config.get("max_local_history", 100):
-        old = index.pop()
-        if old.get("file"):
-            try:
-                os.remove(os.path.join(LOCAL_DIR, old["file"]))
-            except OSError:
-                pass
-    with open(LOCAL_INDEX, "w", encoding="utf-8") as f:
-        json.dump(index, f, ensure_ascii=False, indent=2)
+    with _local_history_lock:
+        while len(index) > config.get("max_local_history", 100):
+            old = index.pop()
+            if old.get("file"):
+                try:
+                    os.remove(os.path.join(LOCAL_DIR, old["file"]))
+                except OSError:
+                    pass
+        temp = LOCAL_INDEX + ".tmp"
+        with open(temp, "w", encoding="utf-8") as f:
+            json.dump(index, f, ensure_ascii=False, indent=2)
+        os.replace(temp, LOCAL_INDEX)
 
 
 def _now():
@@ -1635,44 +1717,59 @@ def _now():
 
 
 def record_local_text(text):
-    index = _local_load()
-    if index and index[0].get("type") == "text" and index[0].get("text") == text:
-        return
-    index.insert(0, {"type": "text", "timestamp": _now(),
-                     "preview": text[:140], "text": text})
-    _local_save(index)
+    with _local_history_lock:
+        index = _local_load()
+        if index and index[0].get("type") == "text" and index[0].get("text") == text:
+            return
+        index.insert(0, {"type": "text", "timestamp": _now(),
+                         "preview": text[:140], "text": text})
+        _local_save(index)
 
 
 def record_local_image(img):
-    name = uuid.uuid4().hex[:12] + ".png"
-    img.save(os.path.join(LOCAL_DIR, name))
-    index = _local_load()
-    index.insert(0, {"type": "image", "timestamp": _now(),
-                     "preview": f"image {img.width}x{img.height}", "file": name})
-    _local_save(index)
+    with _local_history_lock:
+        digest = _img_hash(img)
+        index = _local_load()
+        if index and index[0].get("type") == "image" and index[0].get("hash") == digest:
+            return
+        name = uuid.uuid4().hex[:12] + ".png"
+        img.save(os.path.join(LOCAL_DIR, name))
+        index.insert(0, {"type": "image", "timestamp": _now(),
+                         "preview": f"image {img.width}x{img.height}", "file": name,
+                         "hash": digest})
+        _local_save(index)
 
 
 def record_local_file(path):
-    index = _local_load()
-    index.insert(0, {"type": "file", "timestamp": _now(),
-                     "preview": os.path.basename(path), "path": path})
-    _local_save(index)
+    path = os.path.abspath(path)
+    with _local_history_lock:
+        index = _local_load()
+        if (index and index[0].get("type") == "file"
+                and _file_clipboard_key([index[0].get("path", "")]) == _file_clipboard_key([path])):
+            return
+        index.insert(0, {"type": "file", "timestamp": _now(),
+                         "preview": os.path.basename(path), "path": path})
+        _local_save(index)
 
 
 def record_local_files(paths):
-    paths = list(paths)
+    paths = [os.path.abspath(path) for path in paths]
     if len(paths) == 1:
         record_local_file(paths[0])
         return
-    index = _local_load()
-    index.insert(0, {
-        "type": "bundle",
-        "timestamp": _now(),
-        "preview": ", ".join(os.path.basename(path) for path in paths),
-        "paths": paths,
-        "file_count": len(paths),
-    })
-    _local_save(index)
+    with _local_history_lock:
+        index = _local_load()
+        if (index and index[0].get("type") == "bundle"
+                and _file_clipboard_key(index[0].get("paths", [])) == _file_clipboard_key(paths)):
+            return
+        index.insert(0, {
+            "type": "bundle",
+            "timestamp": _now(),
+            "preview": ", ".join(os.path.basename(path) for path in paths),
+            "paths": paths,
+            "file_count": len(paths),
+        })
+        _local_save(index)
 
 
 # ---------------------------------------------------------------- actions
@@ -1680,7 +1777,7 @@ def action_send_clipboard(icon=None, item=None):
     try:
         files = get_clipboard_files()
         if files:
-            _mark_remote_file_seen(push_files(files))
+            push_files(files)
             record_local_files(files)
             notify(t("files_sent", n=len(files)) if len(files) > 1 else t("file_sent"))
             return
@@ -1703,8 +1800,14 @@ def action_send_clipboard(icon=None, item=None):
 
 def action_get_latest(icon=None, item=None):
     try:
-        data = pull_latest()
-        kind = data.get("type")
+        with _remote_activity_lock:
+            data = pull_latest()
+            kind = data.get("type")
+            _remember_item(
+                data.get("id"),
+                file_seen=kind in ("file", "bundle"),
+                suppress_notification=True,
+            )
         if kind == "text":
             set_clipboard_text(data.get("text", ""))
             notify_received("text", t("text_recv"))
@@ -1716,7 +1819,6 @@ def action_get_latest(icon=None, item=None):
             paths = save_remote_files(data)
             set_clipboard_files(paths)
             record_local_files(paths)
-            _mark_remote_file_seen(data.get("id"))
             notify_received(
                 "file",
                 t("file_arrived", name=os.path.basename(paths[0])),
@@ -1726,7 +1828,6 @@ def action_get_latest(icon=None, item=None):
             paths = save_remote_files(data)
             set_clipboard_files(paths)
             record_local_files(paths)
-            _mark_remote_file_seen(data.get("id"))
             notify_received(
                 "file",
                 t("files_arrived", n=len(paths)),
@@ -1745,7 +1846,7 @@ def action_send_file(icon=None, item=None):
 
     def work():
         try:
-            _mark_remote_file_seen(push_files(paths))
+            push_files(paths)
             record_local_files(paths)
             notify(t("files_sent", n=len(paths)) if len(paths) > 1 else t("file_sent"))
         except Exception as e:
@@ -1764,9 +1865,26 @@ def open_received_folder(icon=None, item=None):
 # ---------------------------------------------------------------- monitor / sync
 def sync_loop():
     last_text = last_img = last_files = last_server = None
+    active_source = None
     next_connection_check = 0
     while not stop_event.is_set():
         try:
+            source = _sync_source_key()
+            if source != active_source:
+                active_source = source
+                last_server = _last_remembered_item()
+                last_text = last_img = last_files = None
+
+            marker = _take_local_upload_marker()
+            if marker:
+                kind, value = marker
+                if kind == "text":
+                    last_text, last_img, last_files = value, None, None
+                elif kind == "image":
+                    last_img, last_text, last_files = value, None, None
+                elif kind == "files":
+                    last_files, last_text, last_img = value, None, None
+
             if time.monotonic() >= next_connection_check:
                 check_connection()
                 next_connection_check = time.monotonic() + 15
@@ -1777,7 +1895,7 @@ def sync_loop():
                     if received:
                         # The clipboard change came from the server. Treat it as
                         # already seen so auto-sync does not upload it again.
-                        last_files = tuple(received)
+                        last_files = _file_clipboard_key(received)
                         last_text = last_img = None
                 except Exception:
                     pass
@@ -1785,13 +1903,13 @@ def sync_loop():
             if config.get("monitor_clipboard") or config.get("auto_sync"):
                 files = get_clipboard_files()
                 if files:
-                    key = tuple(files)
+                    key = _file_clipboard_key(files)
                     if key != last_files:
                         last_files, last_text, last_img = key, None, None
                         record_local_files(files)
                         if config.get("auto_sync"):
                             try:
-                                _mark_remote_file_seen(push_files(files))
+                                push_files(files)
                             except Exception:
                                 pass
                 else:
@@ -1827,18 +1945,20 @@ def sync_loop():
                     sid = data.get("id")
                     if sid and sid != last_server:
                         last_server = sid
-                        if data.get("type") == "text":
+                        suppress = _consume_silent_item(sid)
+                        if not suppress and data.get("type") == "text":
                             txt = data.get("text", "")
                             set_clipboard_text(txt)
                             last_text = txt
                             notify_received("text", t("text_arrived"))
-                        elif data.get("type") == "image":
+                        elif not suppress and data.get("type") == "image":
                             raw = base64.b64decode(data["data"])
                             im = Image.open(io.BytesIO(raw))
                             set_clipboard_image(im)
                             rb = get_clipboard_image()
                             last_img = _img_hash(rb) if rb is not None else _img_hash(im)
                             notify_received("image", t("image_arrived"))
+                        _remember_item(sid)
                 except Exception:
                     pass
         except Exception:
@@ -1908,7 +2028,13 @@ def open_history_window(icon=None, item=None):
 
         def work():
             try:
-                full = fetch_item(it["id"])
+                with _remote_activity_lock:
+                    full = fetch_item(it["id"])
+                    _remember_item(
+                        full.get("id"),
+                        file_seen=full.get("type") in ("file", "bundle"),
+                        suppress_notification=True,
+                    )
                 if full.get("type") == "text":
                     set_clipboard_text(full.get("text", "")); notify(t("copied"))
                 elif full.get("type") == "image":
@@ -1917,7 +2043,6 @@ def open_history_window(icon=None, item=None):
                     paths = save_remote_files(full)
                     set_clipboard_files(paths)
                     record_local_files(paths)
-                    _mark_remote_file_seen(full.get("id"))
                     notify_received(
                         "file",
                         (
@@ -1981,11 +2106,11 @@ def open_history_window(icon=None, item=None):
                 elif it["type"] == "image" and it.get("file"):
                     push_image(Image.open(os.path.join(LOCAL_DIR, it["file"])))
                 elif it["type"] == "file" and it.get("path") and os.path.isfile(it["path"]):
-                    _mark_remote_file_seen(push_file(it["path"]))
+                    push_file(it["path"])
                 elif it["type"] == "bundle":
                     paths = [path for path in it.get("paths", []) if os.path.isfile(path)]
                     if paths:
-                        _mark_remote_file_seen(push_files(paths))
+                        push_files(paths)
                     else:
                         notify(t("unavailable")); return
                 else:
@@ -2387,7 +2512,8 @@ def open_settings(icon=None, item=None):
         config["notify_files"] = notify_files.get()
         config["hotkeys_enabled"] = hk.get()
         save_config(config)
-        _local_save(_local_load())
+        with _local_history_lock:
+            _local_save(_local_load())
         if config["hotkeys_enabled"]:
             register_hotkeys()
         else:
