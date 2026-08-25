@@ -7,23 +7,24 @@ Questa repository contiene il catalogo per installare
 
 ## ZimaOS: aggiungere lo store
 
-Usa sempre questo indirizzo:
+Usa questo indirizzo permanente per il catalogo ZimaOS v2:
 
 ```text
-https://github.com/Mattboxx/Clipboard-Bridge-AppStore/archive/refs/heads/main.zip
+https://mattboxx.github.io/Clipboard-Bridge-AppStore/store.json
 ```
 
-L’indirizzo non contiene numeri di versione: scarica sempre il branch `main` e
-rimane invariato quando il catalogo viene aggiornato.
+L’indirizzo non contiene numeri di versione e punta sempre al catalogo JSON
+generato. Ogni aggiornamento della repository ricrea automaticamente
+`store.json`, `index.json` e i file dell’app nel branch `gh-pages`.
 
 ### Procedura passo passo
 
 1. Apri **App Store** in ZimaOS.
 2. Apri la gestione delle sorgenti o degli store personalizzati.
 3. Premi **Aggiungi sorgente**.
-4. Incolla per intero l’indirizzo `main.zip` indicato sopra.
-5. Conferma e attendi la fine dell’importazione.
-6. Riavvia ZimaOS se la sorgente non viene aggiornata immediatamente.
+4. Incolla per intero l’indirizzo `store.json` indicato sopra.
+5. Conferma e attendi che ZimaOS legga il catalogo JSON.
+6. Aggiorna l’App Store se la sorgente non appare immediatamente.
 7. Riapri l’App Store.
 8. Cerca **Clipboard Bridge** oppure apri la categoria **Utilities**.
 9. Seleziona l’applicazione e premi **Installa**.
@@ -35,7 +36,9 @@ Sostituisci `IP-ZIMA` con l’indirizzo locale del dispositivo, per esempio:
 http://192.168.1.50:5088
 ```
 
-Non usare come sorgente la normale pagina GitHub: è HTML e non un archivio ZIP.
+Non usare come sorgente la normale pagina GitHub, `store-config.json` o il
+vecchio archivio `main.zip`. Le versioni attuali di ZimaOS richiedono il file
+v2 generato `store.json` indicato sopra; la normale pagina GitHub è HTML.
 
 ## Prima configurazione
 
@@ -107,16 +110,16 @@ cartella al suo posto e riavvia Clipboard Bridge.
 
 **La sorgente viene accettata ma l’app non appare**
 
-1. Verifica che l’URL termini con `/archive/refs/heads/main.zip`.
-2. Elimina le vecchie sorgenti versionate.
-3. Reinserisci l’URL permanente.
-4. Riavvia ZimaOS.
+1. Verifica che l’URL termini con `/Clipboard-Bridge-AppStore/store.json`.
+2. Apri l’URL nel browser e controlla che mostri JSON con `"version": 2`.
+3. Elimina la vecchia sorgente ZIP ed eventuali sorgenti versionate.
+4. Reinserisci l’URL JSON permanente e aggiorna l’App Store.
 5. Cerca `Clipboard Bridge` nell’intero store.
 
-**Errore `zip: not a valid zip file`**
+**La vecchia sorgente ZIP non funziona più**
 
-Hai inserito la pagina GitHub invece dell’archivio. Usa l’indirizzo `main.zip`
-riportato all’inizio.
+ZimaOS ora usa il catalogo JSON v2. Rimuovi la sorgente `main.zip` e aggiungi
+l’indirizzo `store.json` riportato all’inizio.
 
 **L’app è installata ma non si apre**
 
@@ -240,7 +243,7 @@ dati applicativi.
 
 | Piattaforma | Sorgente |
 |---|---|
-| ZimaOS | `https://github.com/Mattboxx/Clipboard-Bridge-AppStore/archive/refs/heads/main.zip` |
+| ZimaOS | `https://mattboxx.github.io/Clipboard-Bridge-AppStore/store.json` |
 | Portainer | `https://raw.githubusercontent.com/Mattboxx/Clipboard-Bridge-AppStore/main/portainer/templates.json` |
 | Umbrel | `https://github.com/Mattboxx/Clipboard-Bridge-AppStore` |
 | Runtipi | **Add custom app**, usando `adapters/runtipi/apps/clipboard-bridge/` |
