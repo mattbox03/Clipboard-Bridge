@@ -7,23 +7,24 @@ This repository contains the one-click installation catalog for
 
 ## ZimaOS: add the store
 
-Use this permanent URL:
+Use this permanent ZimaOS v2 source URL:
 
 ```text
-https://github.com/Mattboxx/Clipboard-Bridge-AppStore/archive/refs/heads/main.zip
+https://mattboxx.github.io/Clipboard-Bridge-AppStore/store.json
 ```
 
-The URL has no release number. It always downloads the current `main` branch,
-so it remains the same when the catalog is updated.
+The URL has no release number and always points to the generated JSON catalog.
+Updates to this repository automatically rebuild `store.json`, `index.json` and
+the per-app files on the `gh-pages` branch.
 
 ### Step by step
 
 1. Open the **App Store** in ZimaOS.
 2. Open the source or custom store management screen.
 3. Choose **Add source**.
-4. Paste the complete `main.zip` URL shown above.
-5. Confirm and wait for the import to finish.
-6. Restart ZimaOS if the new source does not refresh immediately.
+4. Paste the complete `store.json` URL shown above.
+5. Confirm and wait for ZimaOS to read the JSON catalog.
+6. Refresh the App Store if the new source does not appear immediately.
 7. Open the App Store again.
 8. Search for **Clipboard Bridge** or open the **Utilities** category.
 9. Select the application and press **Install**.
@@ -35,7 +36,9 @@ Replace `ZIMA-IP` with the local IP address of your ZimaOS machine, for example:
 http://192.168.1.50:5088
 ```
 
-Do not add the normal GitHub repository page as a source. It is HTML, not a ZIP:
+Do not add the normal GitHub repository page, `store-config.json`, or the old
+`main.zip` archive as a source. Current ZimaOS releases need the generated v2
+`store.json` file shown above. The repository page below is HTML:
 
 ```text
 https://github.com/Mattboxx/Clipboard-Bridge-AppStore
@@ -94,7 +97,7 @@ http://192.168.1.50:5088/clipboard/latest/raw?user=alice&password=pass1
 The store URL never changes. After this repository is updated:
 
 1. refresh the custom source in ZimaOS;
-2. if no refresh button is available, remove and re-add the same `main.zip` URL;
+2. if no refresh button is available, remove and re-add the same `store.json` URL;
 3. restart ZimaOS if the cached catalog is still shown;
 4. install the update offered for Clipboard Bridge.
 
@@ -120,16 +123,16 @@ want to erase the history and uploaded files.
 
 ### The source is accepted but no app appears
 
-1. Confirm that the URL ends with `/archive/refs/heads/main.zip`.
-2. Remove older versioned Clipboard Bridge sources.
-3. Add the permanent URL again.
-4. Restart ZimaOS.
+1. Confirm that the URL ends with `/Clipboard-Bridge-AppStore/store.json`.
+2. Open the URL in a browser and verify that it displays JSON with `"version": 2`.
+3. Remove the old ZIP source and any versioned Clipboard Bridge sources.
+4. Add the permanent JSON URL again and refresh the App Store.
 5. Search the complete store for `Clipboard Bridge`.
 
-### `zip: not a valid zip file`
+### The old ZIP source no longer works
 
-The normal repository URL was used. Use the `main.zip` URL from the top of this
-README.
+ZimaOS now consumes the v2 JSON catalog. Remove the `main.zip` source and add
+the `store.json` URL from the top of this README.
 
 ### The application installs but does not open
 
@@ -267,7 +270,7 @@ removing its application data.
 
 | Platform | Source to add |
 |---|---|
-| ZimaOS | `https://github.com/Mattboxx/Clipboard-Bridge-AppStore/archive/refs/heads/main.zip` |
+| ZimaOS | `https://mattboxx.github.io/Clipboard-Bridge-AppStore/store.json` |
 | Portainer | `https://raw.githubusercontent.com/Mattboxx/Clipboard-Bridge-AppStore/main/portainer/templates.json` |
 | Umbrel | `https://github.com/Mattboxx/Clipboard-Bridge-AppStore` |
 | Runtipi | **Add custom app**, using `adapters/runtipi/apps/clipboard-bridge/` |

@@ -370,10 +370,11 @@ python clipboard_bridge-Server.py
 Il repository separato [Clipboard Bridge App Store](https://github.com/Mattboxx/Clipboard-Bridge-AppStore)
 contiene le istruzioni per ZimaOS, Portainer, Umbrel, Runtipi, Dockge e Docker Compose.
 
-La sorgente permanente per ZimaOS è:
+Le versioni attuali di ZimaOS usano il catalogo JSON v2 generato. Aggiungi
+questa sorgente permanente, non l’archivio ZIP della repository:
 
 ```text
-https://github.com/Mattboxx/Clipboard-Bridge-AppStore/archive/refs/heads/main.zip
+https://mattboxx.github.io/Clipboard-Bridge-AppStore/store.json
 ```
 
 ## Configurazione del server

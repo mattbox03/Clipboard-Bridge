@@ -369,10 +369,11 @@ The separate [Clipboard Bridge App Store](https://github.com/Mattboxx/Clipboard-
 provides installation instructions for ZimaOS, Portainer, Umbrel, Runtipi, Dockge and
 standard Docker Compose.
 
-The permanent ZimaOS source is:
+Current ZimaOS releases use the generated v2 JSON catalog. Add this permanent
+source URL, not the repository ZIP:
 
 ```text
-https://github.com/Mattboxx/Clipboard-Bridge-AppStore/archive/refs/heads/main.zip
+https://mattboxx.github.io/Clipboard-Bridge-AppStore/store.json
 ```
 
 ## Server configuration

@@ -38,7 +38,7 @@ Umbrel, Runtipi, Docker Compose, Docker Desktop and Dockge.
 - [English catalog guide](https://github.com/Mattboxx/Clipboard-Bridge-AppStore#readme)
 - [Italian catalog guide](https://github.com/Mattboxx/Clipboard-Bridge-AppStore/blob/main/README.it.md)
 - [Portainer template](https://raw.githubusercontent.com/Mattboxx/Clipboard-Bridge-AppStore/main/portainer/templates.json)
-- [Permanent ZimaOS source](https://github.com/Mattboxx/Clipboard-Bridge-AppStore/archive/refs/heads/main.zip)
+- [Permanent ZimaOS v2 JSON source](https://mattboxx.github.io/Clipboard-Bridge-AppStore/store.json)
 
 ## First publication
 
@@ -50,28 +50,29 @@ Umbrel, Runtipi, Docker Compose, Docker Desktop and Dockge.
 5. Update the separate `Clipboard-Bridge-AppStore` repository when its manifests
    or installation guides change.
 
-The ZimaOS source URL is permanent:
+The generated ZimaOS v2 source URL is permanent:
 
 ```text
-https://github.com/Mattboxx/Clipboard-Bridge-AppStore/archive/refs/heads/main.zip
+https://mattboxx.github.io/Clipboard-Bridge-AppStore/store.json
 ```
 
-Do not put a release tag in the source URL. New catalog releases are published
-to `main`, while the image tag inside the manifest remains pinned until that
-application release has been tested.
+Do not use the repository ZIP or put a release tag in the source URL. The
+AppStore repository builds `store.json`, `index.json` and the per-app files on
+every update to `main`, while the image tag inside the manifest remains pinned
+until that application release has been tested.
 
 ## ZimaOS installation
 
 1. Open the ZimaOS App Store.
 2. Open custom source management.
-3. Add the permanent `main.zip` URL above.
-4. Restart ZimaOS if it does not refresh the source immediately.
+3. Add the permanent `store.json` URL above.
+4. Refresh the App Store if the source does not appear immediately.
 5. Search for **Clipboard Bridge** under **Utilities**.
 6. Install it and open `http://ZIMA-IP:5088`.
 
 The ZimaOS data directory is
 `/DATA/AppData/clipboard-bridge/data`. The complete end-user procedure is in the
-[catalog README](distribution/clipboard-bridge-store/README.md).
+[catalog README](https://github.com/Mattboxx/Clipboard-Bridge-AppStore#readme).
 
 ## Update and backup
 
